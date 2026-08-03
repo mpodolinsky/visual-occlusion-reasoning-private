@@ -1,0 +1,30 @@
+[project]
+name = "visual-occlusion-reasoning"
+version = "0.1.0"
+description = "Utilities for working with the LIBERO-Occ benchmark"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "bddl==1.0.1",
+    "cloudpickle>=2.1",
+    "easydict>=1.9",
+    "future>=0.18.2",
+    "gym==0.25.2",
+    "mujoco==3.2.3",
+    "numpy>=1.22.4,<2",
+    "openpi-client",
+    "opencv-python>=4.6",
+    "pillow>=10",
+    "pyyaml>=6",
+    "robosuite==1.4.1",
+    "torch==2.7.1",
+    "wandb>=0.28.1",
+    "tqdm>=4.70.0",
+    "matplotlib>=3.11.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+openpi-client = { path = "submodules/openpi/packages/openpi-client", editable = true }

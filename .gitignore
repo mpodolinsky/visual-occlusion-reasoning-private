@@ -1,0 +1,23 @@
+.venv/
+.libero/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Generated simulator captures and other experiment artifacts.
+outputs/*
+!outputs/.gitkeep
+
+# Local wandb run logs (synced to wandb.ai, not needed in git).
+wandb/
+
+# Local/editor files.
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+pi0.5-paper.pdf

@@ -1,0 +1,6 @@
+[submodule "openpi"]
+	path = submodules/openpi
+	url = https://github.com/trd44/openpi.git
+[submodule "Libero-Occ"]
+	path = submodules/Libero-Occ
+	url = https://github.com/trd44/Libero-Occ
