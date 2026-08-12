@@ -20,4 +20,6 @@ wandb/
 .vscode/
 .claude/
 
+submodules/*
+
 pi0.5-paper.pdf
