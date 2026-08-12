@@ -75,6 +75,30 @@ See [`scripts/evaluation/README.md`](scripts/evaluation/README.md) for smoke
 tests, resumable and detached runs, output files, episode-pairing rules, and
 evaluator options.
 
+# Collect features and train the perception probe
+
+Start the OpenPI pi0.5 LIBERO policy server (modified to expose internal embeddings) in one terminal:
+
+```bash
+submodules/openpi/.venv/bin/python scripts/perception_probe/serve_pi05_with_features.py
+```
+
+Then run the policy and save the embeddings:
+
+```bash
+NUM_TRIALS=5 scripts/perception_probe/collect_all.sh
+```
+
+By default, embedding-success pairs will be saved as [`.npz`] in [`outputs/perception_probe/features/`](outputs/perception_probe/features/). Train the perception probe by running: 
+
+```bash
+.venv/bin/python scripts/perception_probe/train_probe.py
+```
+
+Depending on your available RAM, you may need to reduce [`--num-workers`] (4 by default). During training, we ramdomly select [`--chunk-size`] episodes and decompress them together. We then randomly sample steps from these episodes to compute the gradient update.
+
+The training loop outputs to [`outputs/perception_probe/probe`](outputs/perception_probe/probe/).
+
 ## Script layout
 
 - [`scripts/evaluation/`](scripts/evaluation/README.md): run the policy on
@@ -85,6 +109,7 @@ evaluator options.
   and render hand-scripted wrist-camera illustrations.
 - [`scripts/sharing/`](scripts/sharing/): turn comparison results into
   collaborator-facing Markdown/PDF reports.
+- [`scripts/perception_probe/`](scripts/perception_probe/): collect features and train perception probe.
 
 Generated artifacts live below `outputs/`. Benchmark assets and the OpenPI
 implementation are pinned in `submodules/Libero-Occ/` and
