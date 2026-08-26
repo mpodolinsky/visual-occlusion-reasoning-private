@@ -1,4 +1,4 @@
-# visual-occlusion-reasoning
+# Steering Vision Language Action Models Using Latent Spaces
 
 Utilities for evaluating an OpenPI VLA on matched LIBERO episodes with and
 without the scene occlusions from LIBERO-Occ.
@@ -98,6 +98,61 @@ By default, embedding-success pairs will be saved as [`.npz`] in [`outputs/perce
 Depending on your available RAM, you may need to reduce [`--num-workers`] (4 by default). During training, we ramdomly select [`--chunk-size`] episodes and decompress them together. We then randomly sample steps from these episodes to compute the gradient update.
 
 The training loop outputs to [`outputs/perception_probe/probe`](outputs/perception_probe/probe/).
+
+### Time-dependent training (SAFE-style)
+
+[`scripts/perception_probe/train_probe_time_dependent.py`](scripts/perception_probe/train_probe_time_dependent.py)
+is a second training loop, ported from
+[SAFE (NeurIPS 2025)](https://github.com/tum-vision/safe)'s `IndepModel`: each
+episode's per-timestep score is accumulated over time (`cumsum`, optionally a
+running mean via `--rmean`) and trained with either SAFE's own hinge loss or a
+per-timestep BCE loss (`--raw-target-loss`) that pushes the raw sigmoid score
+toward 1 at every timestep of a failure episode and 0 at every timestep of a
+success one. It only uses `libero_10_occluded` (both scene variants) and
+holds a random subset of tasks out entirely as a zero-shot `unseen` split
+(`--num-unseen-tasks`, seeded by `--unseen-task-seed`). Eval-time AUROC is
+computed with each episode truncated to its task's shortest observed rollout
+length (`--no-task-min-step-eval` to disable), which keeps LIBERO's episode
+length -- tied directly to success/failure, since a rollout stops the instant
+it succeeds but always runs to the suite's step cap on failure -- from leaking
+into the metric:
+
+```bash
+.venv/bin/python scripts/perception_probe/train_probe_time_dependent.py \
+  --raw-target-loss --epochs 15
+```
+
+Each run directory (`outputs/perception_probe/probe_time_dependent[_rawtarget]/<timestamp>/`)
+gets, automatically: `probe_best.pt`/`probe_last.pt`, `split.json` (the
+train/val/test/calibration/unseen split and per-task `task_min_step`
+values), `test_metrics.json`/`unseen_metrics.json` + ROC curves, an ONNX
+export of the checkpoint (`probe.onnx`, for inspection e.g. in
+[Netron](https://netron.app)), and `test_scores_overlay.png`/
+`unseen_scores_overlay.png` (every episode's raw + accumulated score over
+time, failures in red / successes in blue, with a bold mean curve per
+outcome -- see `plot_overlay()` in `rollout_unseen_with_scores.py`).
+
+Two related scripts aren't run automatically:
+
+- [`eval_run.py`](scripts/perception_probe/eval_run.py): reruns the unseen
+  eval + ONNX export standalone, for a run whose training crashed before
+  reaching its own final eval pass.
+- [`rollout_unseen_with_scores.py`](scripts/perception_probe/rollout_unseen_with_scores.py):
+  rolls out `--num-episodes` real episodes per unseen task against a live
+  feature-serving policy server (see below), scoring each step with the
+  trained probe and saving a review video + score plot per episode, plus an
+  overlay across all of them.
+
+### t-SNE of raw features
+
+[`scripts/perception_probe/plot_tsne_features.py`](scripts/perception_probe/plot_tsne_features.py)
+projects every cached per-timestep feature (mean-pooled per modality) for a
+suite down to 2D with t-SNE (perplexity 30, matching sklearn's -- and SAFE's
+own `visualize_features.py`, which never overrides it -- default) and, from
+that single embedding (t-SNE is stochastic, so it's fit once and reused),
+saves three colored views -- success/failure, task id, and scene variant
+(occluded vs. normal) -- each in both an annotated and a bare (`-clean`, no
+title/legend) version. Pass `--cache` to skip re-fitting on repeat runs.
 
 ## Script layout
 
