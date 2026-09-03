@@ -1,0 +1,28 @@
+{
+  "models": [
+    {
+      "name": "base",
+      "run_dir": "outputs/perception_probe/probe_time_dependent_rawtarget/20260825_122919"
+    },
+    {
+      "name": "best-sweep-1",
+      "run_dir": "outputs/perception_probe/cmp_b8/default_4q/20260830_235208/probe_best.pt"
+    },
+    {
+      "name": "best-sweep-2",
+      "run_dir": "outputs/perception_probe/cmp_uncapped/default_4q/20260830_180703/"
+    },
+    {
+      "name": "best-sweep-3",
+      "run_dir": "outputs/perception_probe/sweeps/phase6/runs/default__seed0/20260829_020349/"
+    },
+    {
+      "name": "best-sweep-4",
+      "run_dir": "outputs/perception_probe/sweeps/phase6/runs/cosine_e16__seed0/20260829_035441/"
+    },
+    {
+      "name": "best-sweep-5",
+      "run_dir": "outputs/perception_probe/sweeps/phase6/runs/e7__seed0/20260829_023953/"
+    }
+  ]
+}

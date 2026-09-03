@@ -22,4 +22,16 @@ wandb/
 
 submodules/*
 
-pi0.5-paper.pdf
+# Reference papers / PDFs (not source).
+*.pdf
+
+# Perception probe experiment artifacts: generated plots and probe weight dumps.
+# Regenerated locally from the calibration/sweep scripts; not needed in git.
+scripts/perception_probe/**/*.png
+scripts/perception_probe/**/*.npz
+
+# Archived exploratory notebooks with large embedded output.
+scripts/perception_probe/calibration/archive/
+
+# Per-run calibration/sweep outputs (result JSON, summaries, model_run_dir).
+scripts/perception_probe/calibration/**/runs/

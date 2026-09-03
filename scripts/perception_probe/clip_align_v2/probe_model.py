@@ -151,6 +151,8 @@ class PerceptionSuccessProbe(nn.Module):
         input_proj_dim: int | None = None,
         embed_dim: int | None = None,
         embed_hidden: int | None = None,
+        decouple_z: bool = False,
+        z_stop_grad: bool = False,
     ):
         super().__init__()
         bad = set(modalities) - set(CANONICAL_MODALITIES)
@@ -183,7 +185,36 @@ class PerceptionSuccessProbe(nn.Module):
 
         head_in = pool_dim * len(self.modalities)
         self.embed_dim = embed_dim
-        if embed_dim is None:
+        self.decouple_z = decouple_z and embed_dim is not None
+        self.z_stop_grad = z_stop_grad
+
+        def _make_head() -> nn.Sequential:
+            # the ORIGINAL single-stage detection head
+            hl: list[nn.Module] = [
+                nn.LayerNorm(head_in), nn.Linear(head_in, hidden_dim), nn.GELU(), nn.Dropout(dropout),
+            ]
+            for _ in range(max(0, n_hidden_layers - 1)):
+                hl += [nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.Dropout(dropout)]
+            hl.append(nn.Linear(hidden_dim, 1))
+            return nn.Sequential(*hl)
+
+        def _make_zhead() -> nn.Sequential:
+            zl: list[nn.Module] = [nn.LayerNorm(head_in)]
+            if embed_hidden is not None:
+                zl += [nn.Linear(head_in, embed_hidden), nn.GELU(), nn.Dropout(dropout),
+                       nn.Linear(embed_hidden, embed_dim)]
+            else:
+                zl += [nn.Linear(head_in, embed_dim)]
+            return nn.Sequential(*zl)
+
+        if self.decouple_z:
+            # detection trunk == the original head (byte-identical to default);
+            # z is a SEPARATE projection off `pooled`, so align_weight never
+            # touches the detection path.
+            self.head = _make_head()
+            self.embed = _make_zhead()
+            self.classifier = None
+        elif embed_dim is None:
             # unchanged: LayerNorm -> Linear(head_in, hidden) -> GELU -> Dropout [-> ...] -> Linear(hidden, 1)
             layers: list[nn.Module] = [
                 nn.LayerNorm(head_in), nn.Linear(head_in, hidden_dim), nn.GELU(), nn.Dropout(dropout),
@@ -239,6 +270,12 @@ class PerceptionSuccessProbe(nn.Module):
             parts.append(self.pool_lang(self._proj(language), language_mask))
         pooled = torch.cat(parts, dim=-1)
 
+        if self.decouple_z:
+            logits = self.head(pooled).squeeze(-1)
+            if return_embedding:
+                zin = pooled.detach() if self.z_stop_grad else pooled
+                return logits, self.embed(zin)
+            return logits
         if self.embed_dim is None:
             logits = self.head(pooled).squeeze(-1)
             return (logits, None) if return_embedding else logits

@@ -89,8 +89,9 @@ from torch.optim.lr_scheduler import LambdaLR, SequentialLR, StepLR
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # scripts/perception_probe (sibling modules)
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # clip_align_v2 -- our patched probe_model wins
 from collect_features import build_task_suite_map  # noqa: E402
 from probe_model import FEATURE_DIM, PerceptionSuccessProbe  # noqa: E402
 from rollout_unseen_with_scores import plot_overlay  # noqa: E402
@@ -212,6 +213,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "latent z toward the CLIP text embedding of the episode's task instruction. Needs --embed-dim.",
     )
     parser.add_argument("--align-temp", type=float, default=0.07, help="InfoNCE temperature for --align-weight.")
+    parser.add_argument("--align-center-anchors", action="store_true",
+                        help="v2 edit 1: mean-center the CLIP anchors (remove the shared 'manipulation "
+                        "instruction' direction) before the InfoNCE / retrieval -- off-diag cos 0.78 -> -0.11.")
+    parser.add_argument("--align-cos-weight", type=float, default=0.0,
+                        help="v2 edit 2: extra term align_cos_weight * mean(1 - cos(z, c_true)) so z lands "
+                        "ON its anchor, not just ranks it first.")
+    parser.add_argument("--decouple-z", action="store_true",
+                        help="v2 edit 3: z is a parallel projection off `pooled`; the detection head is the "
+                        "original single-stage head, untouched by align_weight.")
+    parser.add_argument("--reseed-after-build", action="store_true",
+                        help="reset torch.manual_seed(seed) after build_model so decoupled and plain "
+                        "runs get identical dropout streams -- isolates arch effect from RNG-shift noise.")
+    parser.add_argument("--z-stop-grad", action="store_true",
+                        help="v2 edit 3b: with --decouple-z, feed pooled.detach() into the z head so the "
+                        "align loss trains ONLY z_head -- pools + detection head fully insulated.")
     parser.add_argument(
         "--clip-embeddings", type=Path,
         default=REPO_ROOT / "outputs" / "perception_probe" / "clip" / "task_instruction_embeddings.npy",
@@ -722,12 +738,16 @@ def episode_embedding(model: nn.Module, batch: dict, amp: bool, max_steps_per_ep
     return out / cnt.clamp(min=1.0)
 
 
-def clip_alignment_loss(z_ep, task_idx, clip_embeds, temp):
-    """InfoNCE: normalised z_ep closest to its own task's CLIP embedding. Returns (loss, retrieval_acc)."""
+def clip_alignment_loss(z_ep, task_idx, clip_embeds, temp, cos_weight: float = 0.0):
+    """InfoNCE (+ optional direct-cosine term): normalised z_ep closest to its own
+    task's CLIP embedding. Returns (loss, retrieval_acc)."""
     zc = torch.nn.functional.normalize(z_ep, dim=-1)
     sim = zc @ clip_embeds.T / temp
     loss = torch.nn.functional.cross_entropy(sim, task_idx)
     acc = (sim.argmax(dim=-1) == task_idx).float().mean().item()
+    if cos_weight > 0:
+        c_true = clip_embeds[task_idx]  # (B, D), already unit-norm
+        loss = loss + cos_weight * (1.0 - (zc * c_true).sum(dim=-1)).mean()
     return loss, acc
 
 
@@ -1028,6 +1048,8 @@ def build_model(args: argparse.Namespace) -> PerceptionSuccessProbe:
         input_proj_dim=args.input_proj_dim,
         embed_dim=args.embed_dim,
         embed_hidden=args.embed_hidden,
+        decouple_z=args.decouple_z,
+        z_stop_grad=args.z_stop_grad,
     )
 
 
@@ -1156,6 +1178,8 @@ def main() -> int:
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, **loader_kw)
 
     model = build_model(args).to(args.device)
+    if args.reseed_after_build:
+        torch.manual_seed(args.seed)  # RNG-parity probe: undo the stream shift from building extra params (z_head)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logging.info("Probe: %s  (%d trainable params)", model, n_params)
     optimizer, scheduler = get_optimizer(model, args)
@@ -1164,13 +1188,17 @@ def main() -> int:
     task_to_clip_idx = {}
     if args.align_weight > 0:
         if args.embed_dim is None:
-            raise ValueError("--align-weight requires --embed-dim (nowhere to align without a z latent)")
+            raise ValueError("--align-weight requires --embed-dim (nowhere to align without a z latent)")  # decouple-z also needs --embed-dim
         emb = np.load(args.clip_embeddings)
         task_to_clip_idx = json.loads((args.clip_embeddings.parent / "task_index.json").read_text())
         clip_embeds = torch.tensor(emb, dtype=torch.float32, device=args.device)
         clip_embeds = torch.nn.functional.normalize(clip_embeds, dim=-1)
-        logging.info("CLIP alignment: %d task embeddings (dim %d), weight=%.3g temp=%.3g",
-                     clip_embeds.shape[0], clip_embeds.shape[1], args.align_weight, args.align_temp)
+        if args.align_center_anchors:
+            clip_embeds = clip_embeds - clip_embeds.mean(dim=0, keepdim=True)
+            clip_embeds = torch.nn.functional.normalize(clip_embeds, dim=-1)
+        logging.info("CLIP alignment: %d task embeddings (dim %d), weight=%.3g temp=%.3g center=%s cos_w=%.3g decouple=%s",
+                     clip_embeds.shape[0], clip_embeds.shape[1], args.align_weight, args.align_temp,
+                     args.align_center_anchors, args.align_cos_weight, args.decouple_z)
 
     if not args.no_wandb:
         wandb.init(project=args.wandb_project, entity=args.wandb_entity, config=vars(args))
@@ -1213,7 +1241,7 @@ def main() -> int:
                         z_ep = episode_embedding(model, batch, amp=not args.no_amp)
                         tix = torch.tensor([task_to_clip_idx[t] for t in batch["tasks"]],
                                            device=args.device, dtype=torch.long)
-                        al, al_acc = clip_alignment_loss(z_ep, tix, clip_embeds, args.align_temp)
+                        al, al_acc = clip_alignment_loss(z_ep, tix, clip_embeds, args.align_temp, args.align_cos_weight)
                         total_loss = total_loss + args.align_weight * al
                         logs["align_loss"] = al.item(); logs["align_acc"] = al_acc
 
