@@ -154,6 +154,88 @@ saves three colored views -- success/failure, task id, and scene variant
 (occluded vs. normal) -- each in both an annotated and a bare (`-clean`, no
 title/legend) version. Pass `--cache` to skip re-fitting on repeat runs.
 
+# Collect and label semantic + failure rollouts
+
+[`scripts/semantic_failure/`](scripts/semantic_failure/README.md) collects
+`libero_10` rollouts (normal + occluded) in which every pi0.5 inference, SAVE-A
+prefix tensor, executed action, predicted action chunk, and video frame is
+joinable by array row, then labels each episode with Gemini.
+
+Start the feature server (same one the perception probe uses), then collect --
+`--replan-steps` is mandatory, both scene variants sweep by default, and a
+`manifest.csv` is rewritten after every episode:
+
+```bash
+submodules/openpi/.venv/bin/python scripts/perception_probe/serve_pi05_with_features.py
+
+MUJOCO_GL=egl uv run python scripts/semantic_failure/collect.py \
+  --replan-steps 5 --scene-variant both --num-trials 50
+```
+
+Re-running the command skips episodes already on disk and picks up the next
+incomplete `(scene_variant, task_id, episode)`. Then label (needs
+`GEMINI_API_KEY`):
+
+```bash
+GEMINI_API_KEY=... uv run python scripts/semantic_failure/label_run.py
+```
+
+Each episode's mp4 is uploaded to Gemini once and reused across turns: Dan's
+coarse+refine failure localizer runs first on the failed episodes, then
+3-second keyword phrases (e.g. "reaching for mug") are captioned for every
+episode. Labels -- plus the Gemini model and prompt templates used -- are
+written to a separate `labels.json` + `labels.npz`; the collection artifacts
+(`rollout.json` / `rollout.npz` / `rollout.mp4`) are never rewritten, so a
+labeled dataset is a cheap diff on top of the raw one. `label_run.py` skips
+already-labeled episodes and writes `EXAMPLES.md`.
+
+`scripts/semantic_failure/run.sh` wraps the server launch + collect into one
+command. See that folder's README for the output layout, the alignment
+contract, and per-episode labeling.
+
+## Label an already-collected dataset (no GPU / sim / policy server)
+
+A collected run of 500 episodes (10 tasks x 25 normal + 25 occluded) lives on
+the Hub at
+[`podolinsky/pi0.5-libero-10-features`](https://huggingface.co/datasets/podolinsky/pi0.5-libero-10-features)
+(private). Labeling only reads each episode's `rollout.json` + `rollout.mp4` and
+calls Gemini -- it needs neither a GPU, the simulator, nor the feature server,
+so **do not run `uv sync` for this**; a minimal environment is enough:
+
+```bash
+python -m venv .venv-label && . .venv-label/bin/activate
+pip install numpy google-genai imageio imageio-ffmpeg huggingface_hub
+```
+
+Download the episodes -- either the full ~53 GB, or just the videos + metadata
+the labeler reads (the ~50 GB of feature `.npz` is not needed to label; labels
+re-attach to the full set later):
+
+```bash
+hf download podolinsky/pi0.5-libero-10-features --repo-type dataset \
+  --local-dir data/pi05-libero-10 \
+  --include "*rollout.json" "*rollout.mp4" "manifest.csv"
+```
+
+Label every episode under that directory, then push the labels back:
+
+```bash
+export GEMINI_API_KEY=...
+python scripts/semantic_failure/label_run.py data/pi05-libero-10
+
+hf upload podolinsky/pi0.5-libero-10-features data/pi05-libero-10 . \
+  --repo-type dataset \
+  --include "*labels.json" "*labels.npz" "*example.md" "manifest.csv" "EXAMPLES.md"
+```
+
+`label_run.py` walks `*/*/ep*/` under the path, writes `labels.json` +
+`labels.npz` + `example.md` into each episode dir, refreshes `manifest.csv`, and
+writes `EXAMPLES.md`. It **skips episodes that already carry labels**, so it is
+safe to interrupt and resume. Flags: `--force` re-labels, `--no-refine` skips
+the +-3 s failure-onset refine pass, `--model <id>` picks a different Gemini
+model (default `gemini-3.1-pro-preview`). Single episode:
+`python scripts/semantic_failure/label.py data/pi05-libero-10/<variant>/<NN>_<task>/ep<NNN>`.
+
 ## Script layout
 
 - [`scripts/evaluation/`](scripts/evaluation/README.md): run the policy on
@@ -165,6 +247,11 @@ title/legend) version. Pass `--cache` to skip re-fitting on repeat runs.
 - [`scripts/sharing/`](scripts/sharing/): turn comparison results into
   collaborator-facing Markdown/PDF reports.
 - [`scripts/perception_probe/`](scripts/perception_probe/): collect features and train perception probe.
+- [`scripts/semantic_failure/`](scripts/semantic_failure/README.md): collect
+  row-aligned `libero_10` rollouts (features + executed actions + predicted
+  chunks + `control`/`sim`/`policy`/`chunk` clocks + 20 Hz agentview & wrist
+  video) and label them with Gemini 3-second keyword phrases and Dan's two-pass
+  failure localizer. Global manifest + auto-resume.
 
 Generated artifacts live below `outputs/`. Benchmark assets and the OpenPI
 implementation are pinned in `submodules/Libero-Occ/` and
