@@ -288,6 +288,26 @@ uv run python scripts/groot/compare.py
 See that folder's [README](scripts/groot/README.md) for the obs/action
 convention, output layout, and the checkpoint provenance.
 
+# Run GR00T-N1.7 zero-shot on LIBERO-X
+
+[`scripts/libero-x/`](scripts/libero-x/README.md) measures cross-benchmark
+zero-shot transfer of NVIDIA's released `nvidia/GR00T-N1.7-LIBERO` checkpoint
+on **[LIBERO-X](https://github.com/meituan/LIBERO-X)** (RSS 2026: 5 difficulty
+levels, new objects/predicates/phrasings) -- no fine-tuning, so a low success
+rate is the expected result, not a bug. It reuses `scripts/groot/`'s GR00T
+websocket server and obs/action bridge unchanged (see that folder's setup);
+only the LIBERO-X env plumbing (a different `libero` package fork, imported
+read-only) is new.
+
+```bash
+scripts/libero-x/setup.sh      # one-time: init submodules/LIBERO-X (~785MB)
+scripts/libero-x/run_all.sh    # start GR00T server if needed, smoke test, then a sample run
+cat outputs/libero-x/results.json
+```
+
+See that folder's [README](scripts/libero-x/README.md) for the architecture,
+manual run steps, and output layout.
+
 ## Script layout
 
 - [`scripts/evaluation/`](scripts/evaluation/README.md): run the policy on
@@ -307,7 +327,11 @@ convention, output layout, and the checkpoint provenance.
   chunks + `control`/`sim`/`policy`/`chunk` clocks + 20 Hz agentview & wrist
   video) and label them with Gemini 3-second keyword phrases and Dan's two-pass
   failure localizer. Global manifest + auto-resume.
+- [`scripts/libero-x/`](scripts/libero-x/README.md): zero-shot cross-benchmark
+  success-rate gauge for GR00T-N1.7 on LIBERO-X, reusing `scripts/groot/`'s
+  policy server and obs/action bridge unchanged.
 
 Generated artifacts live below `outputs/`. Benchmark assets and the OpenPI
 implementation are pinned in `submodules/Libero-Occ/` and
-`submodules/openpi/`, respectively.
+`submodules/openpi/`, respectively; the LIBERO-X benchmark assets are pinned
+in `submodules/LIBERO-X/`.
