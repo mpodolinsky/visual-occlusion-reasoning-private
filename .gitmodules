@@ -4,3 +4,6 @@
 [submodule "Libero-Occ"]
 	path = submodules/Libero-Occ
 	url = https://github.com/trd44/Libero-Occ
+[submodule "Isaac-GR00T"]
+	path = submodules/Isaac-GR00T
+	url = https://github.com/NVIDIA/Isaac-GR00T

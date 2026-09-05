@@ -236,6 +236,58 @@ the +-3 s failure-onset refine pass, `--model <id>` picks a different Gemini
 model (default `gemini-3.1-pro-preview`). Single episode:
 `python scripts/semantic_failure/label.py data/pi05-libero-10/<variant>/<NN>_<task>/ep<NNN>`.
 
+# Run GR00T-N1.7 on LIBERO-10
+
+[`scripts/groot/`](scripts/groot/README.md) runs **NVIDIA GR00T-N1.7**
+(`nvidia/GR00T-N1.7-LIBERO` -> `libero_10` checkpoint) on the same
+`libero_10` normal + occluded pairs as the pi0.5 eval, so occlusion robustness
+can be compared across VLAs: success rate, aligned action/clock arrays, review
+videos, and -- with `--with-features` -- the frozen VLM backbone hidden states
+(layer 16 of the Cosmos-Reason2-2B backbone, the pi0.5 SAVE-A analog).
+
+GR00T runs behind an openpi-style websocket, in its own environment
+(`submodules/Isaac-GR00T`, a submodule pinned at `n1.7-release`, with its own
+`.venv`). One-time setup (accept the gated
+[model](https://huggingface.co/nvidia/GR00T-N1.7-LIBERO) and
+[backbone](https://huggingface.co/nvidia/Cosmos-Reason2-2B) licenses first):
+
+```bash
+scripts/groot/setup.sh
+```
+
+Then serve GR00T in one terminal and collect in another (the collector runs in
+this repo's top-level venv -- it is the websocket client):
+
+```bash
+scripts/groot/serve.sh
+
+MUJOCO_GL=egl uv run python scripts/groot/collect.py \
+  --replan-steps 8 --scene-variant both --num-trials 25
+```
+
+`--replan-steps` is mandatory (GR00T's action horizon is 16; NVIDIA's LIBERO
+README executes 8 per inference). Re-running skips episodes already on disk and
+picks up the next incomplete `(scene_variant, task_id, episode)`; a
+`manifest.csv` is rewritten after every episode. `scripts/groot/run.sh` wraps
+the server launch + collect into one command (`STOP_PI05=1` frees the GPU by
+stopping the pi0.5 feature server first -- one GPU cannot hold both models).
+
+To also save the backbone hidden states, start the server with
+`GROOT_WITH_FEATURES=1 scripts/groot/serve.sh` and add `--with-features` to
+`collect.py` -- `base_image (64, 2048)` / `wrist_image (64, 2048)` /
+`language (200, 2048)` + mask / `state_features (1536)` per inference land in
+`rollout.npz`. See the folder README for the layout and how it compares to
+pi0.5 SAVE-A.
+
+Then compare normal vs occluded:
+
+```bash
+uv run python scripts/groot/compare.py
+```
+
+See that folder's [README](scripts/groot/README.md) for the obs/action
+convention, output layout, and the checkpoint provenance.
+
 ## Script layout
 
 - [`scripts/evaluation/`](scripts/evaluation/README.md): run the policy on
@@ -247,6 +299,9 @@ model (default `gemini-3.1-pro-preview`). Single episode:
 - [`scripts/sharing/`](scripts/sharing/): turn comparison results into
   collaborator-facing Markdown/PDF reports.
 - [`scripts/perception_probe/`](scripts/perception_probe/): collect features and train perception probe.
+- [`scripts/groot/`](scripts/groot/README.md): run NVIDIA GR00T-N1.7 on
+  `libero_10` (normal + occluded) behind an openpi-style websocket and compare
+  its occlusion success-rate drop against pi0.5. Global manifest + auto-resume.
 - [`scripts/semantic_failure/`](scripts/semantic_failure/README.md): collect
   row-aligned `libero_10` rollouts (features + executed actions + predicted
   chunks + `control`/`sim`/`policy`/`chunk` clocks + 20 Hz agentview & wrist

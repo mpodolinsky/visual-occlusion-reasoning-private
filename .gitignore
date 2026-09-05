@@ -22,6 +22,9 @@ wandb/
 
 submodules/*
 
+# Downloaded model weights (GR00T-N1.7-LIBERO etc.), fetched by scripts/groot/setup.sh.
+checkpoints/
+
 # Reference papers / PDFs (not source).
 *.pdf
 
